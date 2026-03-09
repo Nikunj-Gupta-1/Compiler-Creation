@@ -74,6 +74,7 @@ with open(sys.argv[1], 'r') as f:
     data = f.read()
 lexer.input(data)
 
+
 print(f"{'Lexeme':<10}{'Token Type':<15}{'Line'}")
 print("-" * 35)
 
