@@ -1,2 +1,3 @@
-A = 10 ^ 2
-IF( A && B )
+int x;
+hello
+x = 9;
