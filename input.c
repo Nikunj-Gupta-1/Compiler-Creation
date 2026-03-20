@@ -1,7 +1,6 @@
 int a;
 int b;
-int sum;
-@
+int sum
 float avg;
 a = 2 * (3 + 4);
 b = 15;
