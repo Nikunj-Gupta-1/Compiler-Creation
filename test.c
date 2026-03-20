@@ -1,3 +1,3 @@
-int x;
-hello
-x = 9;
+int a;
+int y;
+a = 5 + ;
