@@ -205,8 +205,9 @@ def p_error(p):
             print(" " * (len(str(line)) + 2 + col - 1) + "^")
         print("Hint:", suggestion)
     else:
-        print("Syntax Error: unexpected end of input (EOF)")
-        print("Hint: Maybe you forgot a '}', ')', or ';' before the end of the file.")
+        #print("Syntax Error: unexpected end of input (EOF)")
+        #print("Hint: Maybe you forgot a '}', ')', or ';' before the end of the file.")
+        sys.exit(1)
     sys.exit(1)
 
 parser = yacc.yacc()
