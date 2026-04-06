@@ -65,7 +65,7 @@ def t_newline(t):
 
 def t_error(t):
     print(f"Lexical Error: Illegal character '{t.value[0]}' at line {t.lexer.lineno}")
-    # t.lexer.skip(1)
+    t.lexer.skip(1)
 
 lexer = lex.lex()
 

@@ -176,7 +176,7 @@ def _suggest_fix(p, text):
     if ttype in ('INT', 'FLOAT'):
         return "Check for a missing operator before this literal or a missing ';' after the previous statement."
     if ttype == 'RCURLY':
-        return "Unexpected '}'. Make sure all '{' have matching '}' and that blocks are properly closed."
+        return "Unexpected '}'. Make sure all '{' have matching '}' and that blocks are properly closed.\nThere might be a missing semicolon in the previous statement."
     if ttype == 'LCURLY':
         return "Unexpected '{'. Check the preceding 'if', 'while', or block syntax."
     if ttype == 'RPAREN':
@@ -205,8 +205,8 @@ def p_error(p):
             print(" " * (len(str(line)) + 2 + col - 1) + "^")
         print("Hint:", suggestion)
     else:
-        #print("Syntax Error: unexpected end of input (EOF)")
-        #print("Hint: Maybe you forgot a '}', ')', or ';' before the end of the file.")
+        print("Syntax Error: unexpected end of input (EOF). There might be an undeclared variable in the code.")
+        print("Hint: Maybe you forgot a '}', ')', or ';' before the end of the file.")
         sys.exit(1)
     sys.exit(1)
 
