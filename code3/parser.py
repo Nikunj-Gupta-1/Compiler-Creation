@@ -22,7 +22,7 @@ grammar = {
     "bool_factor": [["NOT", "bool_factor"], ["LPAREN", "bool_expr", "RPAREN"], ["rel_expr"]],
     "rel_expr": [["expr", "LT", "expr"], ["expr", "GT", "expr"], ["expr", "LE", "expr"],
                  ["expr", "GE", "expr"], ["expr", "EQ", "expr"], ["expr", "NEQ", "expr"]],
-    "if_stmt": [["IF", "LPAREN", "bool_expr", "RPAREN", "stmt", "ELSE", "stmt"]],
+    "if_stmt": [["IF", "LPAREN", "bool_expr", "RPAREN", "stmt", "ELSE", "stmt"], ["IF", "LPAREN", "bool_expr", "RPAREN", "stmt"]],
     "while_stmt": [["WHILE", "LPAREN", "bool_expr", "RPAREN", "stmt"]],
     "block": [["LCURLY", "stmt_list", "RCURLY"]],
     "print_stmt": [["PRINT", "LPAREN", "expr", "RPAREN", "SEMI"]],
@@ -483,7 +483,8 @@ class SemanticAnalyzer:
             if cond_type != "bool":
                 self.error("Invalid boolean condition in if statement", node.lineno)
             self.analyze(node.children[1])
-            self.analyze(node.children[2])
+            if len(node.children) > 2:
+                self.analyze(node.children[2])
         elif node.type == "while_stmt":
             cond_type = self.eval_expr(node.children[0])
             if cond_type != "bool":
@@ -573,8 +574,26 @@ class TACGenerator:
         self.label_count += 1
         return f"L{self.label_count}"
 
-    def emit(self, instr):
-        self.code.append(instr)
+    def emit(self, op, arg1="-", arg2="-", result="-"):
+        self.code.append((op, str(arg1), str(arg2), str(result)))
+
+    def emit_assign(self, target, source):
+        self.emit("=", source, "-", target)
+
+    def emit_binary(self, op, left, right, result):
+        self.emit(op, left, right, result)
+
+    def emit_if_goto(self, cond, label):
+        self.emit("if_goto", cond, "-", label)
+
+    def emit_goto(self, label):
+        self.emit("goto", "-", "-", label)
+
+    def emit_label(self, label):
+        self.emit("label", "-", "-", label)
+
+    def emit_print(self, value):
+        self.emit("print", value, "-", "-")
 
     def generate(self, node):
         if not node:
@@ -595,37 +614,40 @@ class TACGenerator:
             self.generate(node.children[0])
         elif node.type == "assign_stmt":
             t = self.gen_expr(node.children[0])
-            self.emit(f"{node.leaf} = {t}")
+            self.emit_assign(node.leaf, t)
         elif node.type == "if_stmt":
             cond = self.gen_bool(node.children[0])
             l_true = self.new_label()
             l_false = self.new_label()
-            l_end = self.new_label()
-            self.emit(f"if {cond} goto {l_true}")
-            self.emit(f"goto {l_false}")
-            self.emit(f"{l_true}:")
+            self.emit_if_goto(cond, l_true)
+            self.emit_goto(l_false)
+            self.emit_label(l_true)
             self.generate(node.children[1])
-            self.emit(f"goto {l_end}")
-            self.emit(f"{l_false}:")
-            self.generate(node.children[2])
-            self.emit(f"{l_end}:")
+            if len(node.children) > 2:
+                l_end = self.new_label()
+                self.emit_goto(l_end)
+                self.emit_label(l_false)
+                self.generate(node.children[2])
+                self.emit_label(l_end)
+            else:
+                self.emit_label(l_false)
         elif node.type == "while_stmt":
             l_start = self.new_label()
             l_body = self.new_label()
             l_end = self.new_label()
-            self.emit(f"{l_start}:")
+            self.emit_label(l_start)
             cond = self.gen_bool(node.children[0])
-            self.emit(f"if {cond} goto {l_body}")
-            self.emit(f"goto {l_end}")
-            self.emit(f"{l_body}:")
+            self.emit_if_goto(cond, l_body)
+            self.emit_goto(l_end)
+            self.emit_label(l_body)
             self.generate(node.children[1])
-            self.emit(f"goto {l_start}")
-            self.emit(f"{l_end}:")
+            self.emit_goto(l_start)
+            self.emit_label(l_end)
         elif node.type == "block":
             self.generate(node.children[0])
         elif node.type == "print_stmt":
             t = self.gen_expr(node.children[0])
-            self.emit(f"print {t}")
+            self.emit_print(t)
         elif node.type == "error_stmt":
             pass
         return None
@@ -636,17 +658,15 @@ class TACGenerator:
         if node.type == "factor":
             if node.leaf is not None:
                 return str(node.leaf)
-            else:
-                return self.gen_expr(node.children[0])
+            return self.gen_expr(node.children[0])
         elif node.type in ("expr", "term"):
             if len(node.children) == 2:
                 left = self.gen_expr(node.children[0])
                 right = self.gen_expr(node.children[1])
                 t = self.new_temp()
-                self.emit(f"{t} = {left} {node.leaf} {right}")
+                self.emit_binary(node.leaf, left, right, t)
                 return t
-            else:
-                return self.gen_expr(node.children[0])
+            return self.gen_expr(node.children[0])
         return str(node.leaf) if node.leaf is not None else ""
 
     def gen_bool(self, node):
@@ -656,34 +676,51 @@ class TACGenerator:
             left = self.gen_expr(node.children[0])
             right = self.gen_expr(node.children[1])
             t = self.new_temp()
-            self.emit(f"{t} = {left} {node.leaf} {right}")
+            self.emit_binary(node.leaf, left, right, t)
             return t
         elif node.type in ("bool_expr", "bool_term"):
             left = self.gen_bool(node.children[0])
             right = self.gen_bool(node.children[1])
             t = self.new_temp()
-            op = "||" if node.leaf == "||" else "&&"
-            self.emit(f"{t} = {left} {op} {right}")
+            self.emit_binary(node.leaf, left, right, t)
             return t
         elif node.type == "NOT":
             val = self.gen_bool(node.children[0])
             t = self.new_temp()
-            self.emit(f"{t} = ! {val}")
+            self.emit("not", val, "-", t)
             return t
         elif node.type == "bool_factor":
             return self.gen_bool(node.children[0])
         return self.gen_expr(node)
 
+    def format_instruction(self, quad):
+        op, arg1, arg2, result = quad
+        if op == "label":
+            return f"{result}:"
+        if op == "goto":
+            return f"goto {result}"
+        if op == "if_goto":
+            return f"if {arg1} goto {result}"
+        if op == "print":
+            return f"print {arg1}"
+        if op == "=":
+            return f"{result} = {arg1}"
+        if op == "not":
+            return f"{result} = ! {arg1}"
+        return f"{result} = {arg1} {op} {arg2}"
+
     def display(self):
         print("\n" + "=" * 60)
-        print(" 4: THREE-ADDRESS CODE (TAC)")
+        print(" 4: THREE-ADDRESS CODE (TAC) - QUADRUPLES")
         print("=" * 60)
-        for i, instr in enumerate(self.code):
-            if instr.endswith(":"):
-                print(f"  {instr}")
-            else:
-                print(f"    {instr}")
-
+        print(f"\n {'#':<4}{'OP':<12}{'ARG1':<12}{'ARG2':<12}{'RESULT':<12}")
+        print(" " + "-" * 52)
+        for i, quad in enumerate(self.code, 1):
+            op, arg1, arg2, result = quad
+            print(f" {i:<4}{op:<12}{arg1:<12}{arg2:<12}{result:<12}")
+        print("\n--- Readable TAC ---")
+        for quad in self.code:
+            print(f" {self.format_instruction(quad)}")
 
 def run_lalr_parser(data):
     precedence = (
@@ -820,8 +857,12 @@ def run_lalr_parser(data):
         p[0] = Node("while_stmt", [p[3], p[5]], lineno=p.lineno(1))
 
     def p_if_stmt(p):
-        '''if_stmt : IF LPAREN bool_expr RPAREN stmt ELSE stmt'''
-        p[0] = Node("if_stmt", [p[3], p[5], p[7]], lineno=p.lineno(1))
+        '''if_stmt : IF LPAREN bool_expr RPAREN stmt ELSE stmt
+                   | IF LPAREN bool_expr RPAREN stmt'''
+        if len(p) == 8:
+            p[0] = Node("if_stmt", [p[3], p[5], p[7]], lineno=p.lineno(1))
+        else:
+            p[0] = Node("if_stmt", [p[3], p[5]], lineno=p.lineno(1))
 
     def p_block(p):
         '''block : LCURLY stmt_list RCURLY'''
