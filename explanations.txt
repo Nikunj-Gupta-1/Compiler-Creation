@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────
+# PSEUDO-ASSEMBLY TARGET CODE GENERATOR
+#
+# Register model: unlimited virtual registers R0, R1, R2, ...
+# Memory model  : each program variable lives at label [varname]
+#
+# Instruction set:
+#   MOV  Rdst, imm/Rsrc      -- load immediate or copy register
+#   LOAD Rdst, [var]         -- load variable from memory
+#   STORE [var], Rsrc        -- store register to memory variable
+#   ADD  Rdst, Ra, Rb        -- Rdst = Ra + Rb
+#   SUB  Rdst, Ra, Rb        -- Rdst = Ra - Rb
+#   MUL  Rdst, Ra, Rb        -- Rdst = Ra * Rb
+#   DIV  Rdst, Ra, Rb        -- Rdst = Ra / Rb
+#   MOD  Rdst, Ra, Rb        -- Rdst = Ra % Rb
+#   CMP  Rdst, Ra, Rb, <op>  -- Rdst = 1 if Ra <op> Rb else 0
+#   NOT  Rdst, Ra            -- Rdst = logical NOT Ra
+#   AND  Rdst, Ra, Rb        -- Rdst = Ra AND Rb
+#   OR   Rdst, Ra, Rb        -- Rdst = Ra OR Rb
+#   BNZ  Rsrc, label         -- branch to label if Rsrc != 0
+#   JMP  label               -- unconditional jump
+#   LABEL label:             -- label definition
+#   PRINT Rsrc               -- output register value
+#
+# Control flow translation:
+#   if_goto cond L  ->  load/compute cond into Rc, BNZ Rc, L
+#   goto L          ->  JMP L
+#   label L         ->  LABEL L:
+#   while loop: LABEL start -> compute cond -> BNZ body -> JMP end
+#                -> LABEL body -> body code -> JMP start -> LABEL end
+# ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────
+# QUESTION 5: OPTIMIZATION & TARGET CODE GENERATION
+# ─────────────────────────────────────────────────────────────
+#
+# Optimization: Constant Folding
+#   Replaces arithmetic operations on two compile-time constants
+#   with a single constant in the TAC quadruple stream.
+#
+# Example cases where optimised pseudo-assembly differs:
+#
+#   Source:  x = 3 + 5 * 2 ;
+#   Without: t1 = 5 * 2        ADD/MUL instructions for both ops
+#            t2 = 3 + t1
+#            x  = t2
+#   With:    x  = 13           single MOV, no arithmetic needed
+#
+#   Source:  y = 10 / 2 ;
+#   Without: t1 = 10 / 2       DIV instruction emitted
+#            y  = t1
+#   With:    y  = 5            single MOV, no DIV instruction
+#
+#   Source:  if (a < 4 + 1)    condition RHS folded to 5
+#   Without: t1 = 4 + 1        ADD emitted before comparison
+#            t2 = a < t1
+#   With:    t1 = a < 5        comparison directly against 5
+# ─────────────────────────────────────────────────────────────
