@@ -4,6 +4,220 @@ import sys
 import io
 from contextlib import redirect_stdout
 from collections import defaultdict
+class SemanticAnalyzer:
+    def __init__(self):
+        self.symbol_table = [{}]
+        self.errors = []
+        self.scope_id = 0
+        self.all_scopes = [(self.scope_id, self.symbol_table[0])]
+
+    def error(self, msg, lineno):
+        self.errors.append(f"Line {lineno}: {msg}")
+
+    def enter_scope(self):
+        #self.symbol_table.append({})
+        self.scope_id += 1
+        new_scope = {}
+        self.symbol_table.append(new_scope)
+        self.all_scopes.append((self.scope_id, new_scope))
+
+    def exit_scope(self):
+        self.symbol_table.pop()
+
+    def current_scope(self):
+        return self.symbol_table[-1]
+
+    def lookup(self, var):
+        for scope in reversed(self.symbol_table):
+            if var in scope:
+                return scope[var]
+        return None
+
+    def declare(self, var, var_type, lineno):
+        if var in self.current_scope():
+            self.error(f"Multiple declaration of '{var}'", lineno)
+        else:
+            self.current_scope()[var] = {
+                "type": var_type,
+                "offset": len(self.current_scope()) * 4
+            }
+            print(f"Declared {var} of type {var_type} in scope {len(self.symbol_table)-1}")
+
+
+    def check_variable(self, var, lineno):
+        var_type = self.lookup(var)
+        if var_type is None:
+            self.error(f"Undeclared variable '{var}'", lineno)
+        return var_type["type"] if var_type else None
+
+
+    # Traverse AST
+
+    def resolve_type(self, left, right):
+        if left == "float" or right == "float":
+            return "float"
+        return "int"
+    def analyze(self, node):
+        if not node:
+            return None
+
+        if node.type == "program":
+            self.analyze(node.children[0])
+            self.analyze(node.children[1])
+
+        elif node.type == "decl":
+            var_type = node.children[0].leaf
+            var_name = node.leaf
+            self.declare(var_name, var_type, node.lineno)
+
+        elif node.type == "assign_stmt":
+            var_name = node.leaf
+            expr_type = self.eval_expr(node.children[0])
+            var_type = self.check_variable(var_name, node.lineno)
+
+            if var_type and expr_type and var_type != expr_type:
+                # int <- float (allowed with implicit cast)
+                if var_type == "int" and expr_type == "float":
+                    # optional: allow truncation silently
+                    self.error(f"Type mismatch in assignment to '{var_name}'", node.lineno)
+                    #pass
+
+                # float <- int (safe widening)
+                elif var_type == "float" and expr_type == "int":
+                    pass
+
+                # exact match
+                elif var_type != expr_type:
+                    self.error(f"Type mismatch in assignment to '{var_name}'", node.lineno)
+
+        elif node.type == "block":
+            self.enter_scope()
+            self.analyze(node.children[0])
+            self.exit_scope()
+
+        elif node.type == "stmt_list":
+            for child in node.children:
+                if child.type != "empty":
+                    self.analyze(child)
+
+        elif node.type == "stmt":
+            self.analyze(node.children[0])
+
+        elif node.type == "if_stmt":
+            cond_type = self.eval_expr(node.children[0])
+            if cond_type != "bool":
+                self.error("Invalid boolean condition in IF", node.lineno)
+            self.analyze(node.children[1])
+            self.analyze(node.children[2])
+
+        elif node.type == "while_stmt":
+            cond_type = self.eval_expr(node.children[0])
+            if cond_type != "bool":
+                self.error("Invalid boolean condition in WHILE", node.lineno)
+            self.analyze(node.children[1])
+
+        elif node.type == "print_stmt":
+            self.eval_expr(node.children[0])
+        
+        elif node.type == "decl_list":
+            for child in node.children:
+                self.analyze(child)
+
+    # Expression evaluation
+    def eval_expr(self, node):
+        if node.type == "factor":
+            if node.leaf is not None:
+                if isinstance(node.leaf, int):
+                    return "int"
+                elif isinstance(node.leaf, float):
+                    return "float"
+                else:
+                    return self.check_variable(node.leaf, node.lineno)
+            else:
+                return self.eval_expr(node.children[0])
+
+        elif node.type in ("expr", "term"):
+            left = self.eval_expr(node.children[0])
+            right = self.eval_expr(node.children[1])
+            op = node.leaf
+            
+            if left is None or right is None:
+                return left or right
+            
+            if op in ["+", "-", "*", "/", "%"]:
+                result_type = self.resolve_type(left, right)
+                return result_type
+
+        elif node.type == "rel_expr":
+            left = self.eval_expr(node.children[0])
+            right = self.eval_expr(node.children[1])
+            if left is None or right is None:
+                self.error("Invalid relational expression", node.lineno)
+                return "bool"
+            if left != right:
+                self.error("Type mismatch in relational expression", node.lineno)
+            return "bool"
+
+        elif node.type in ("bool_expr", "bool_term"):
+            left = self.eval_expr(node.children[0])
+            right = self.eval_expr(node.children[1])
+            if left is None or right is None:
+                return "bool"
+            #else:
+                #self.error("Invalid boolean expression", node.lineno)
+                #return "bool"
+            if left != "bool" or right != "bool":
+                self.error("Invalid boolean expression", node.lineno)
+            return "bool"
+
+        elif node.type == "NOT":
+            val = self.eval_expr(node.children[0])
+            if val is None:
+                return "bool"
+            if val != "bool":
+                self.error("Invalid NOT usage", node.lineno)
+            return "bool"
+
+        return None
+
+    def report(self):
+        if not self.errors:
+            print("\nNo semantic errors")
+        else:
+            print("\nSemantic Errors:")
+            for err in self.errors:
+                print(err)
+    
+    """def print_symbol_table(self):
+        for i, scope in enumerate(self.symbol_table):
+            print(f"\nScope Level: {i}")
+            print("-" * 44)
+            print(f"{'Variable':<15}{'Type':<15}{'Offset':<10}")
+            print("-" * 44)
+
+            if not scope:
+                print("(empty)")
+            else:
+                for var, info in scope.items():
+                    print(f"{var:<15}{info['type']:<15}{info['offset']:<10}")
+
+        print("\n" + "=" * 50)
+    """
+    def print_symbol_table(self):
+
+        for scope_id, scope in self.all_scopes:
+            print(f"\nScope Level: {scope_id}")
+            print("-" * 44)
+            print(f"{'Variable':<15}{'Type':<15}{'Offset':<10}")
+            print("-" * 44)
+
+            if not scope:
+                print("(empty)")
+            else:
+                for var, info in scope.items():
+                    print(f"{var:<15}{info['type']:<15}{info['offset']:<10}")
+
+        print("\n" + "=" * 50)
 
 
 # Grammar used for FIRST / FOLLOW analysis (same as the original first_follow.py)
@@ -240,10 +454,10 @@ def shift_reduce_parser(tokens):
                 break
 
         if stack in (["E", "$"], ["E"]) and tokens in (["$"], []):
-            print("  ✅ Accepted")
+            print("Accepted")
             break
         if tokens and tokens[0] == "$":
-            print("  ❌ Rejected")
+            print("Rejected")
             break
 
 
@@ -306,10 +520,12 @@ def run_lalr_parser(data, show_trace=True):
         return None
 
     class Node:
-        def __init__(self, ntype, children=None, leaf=None):
+        def __init__(self, ntype, children=None, leaf=None, lineno=None):
             self.type     = ntype
             self.children = children or []
             self.leaf     = leaf
+            self.lineno   = lineno
+
 
         def print_tree(self, indent=0):
             label = self.type + (f": {self.leaf}" if self.leaf else "")
@@ -335,28 +551,28 @@ def run_lalr_parser(data, show_trace=True):
     # --- grammar rules ---
     def p_program(p):
         '''program : decl_list stmt_list'''
-        p[0] = Node("program", [p[1], p[2]])
+        p[0] = Node("program", [p[1], p[2]], lineno=1)
         print("  Valid program")
         parse_tree_holder[0] = p[0]
 
     def p_decl_list(p):
         '''decl_list : decl decl_list
                      | empty'''
-        p[0] = Node("decl_list", [p[1], p[2]]) if len(p) == 3 else Node("decl_list")
+        p[0] = Node("decl_list", [p[1], p[2]], lineno=p.lineno(1)) if len(p) == 3 else Node("decl_list", lineno=p.lineno(1))
 
     def p_decl(p):
         '''decl : type ID SEMI'''
-        p[0] = Node("decl", [p[1]], p[2])
+        p[0] = Node("decl", [p[1]], p[2], lineno=p.lineno(2))
 
     def p_type(p):
         '''type : INT_TYPE
                | FLOAT_TYPE'''
-        p[0] = Node("type", leaf=p[1])
+        p[0] = Node("type", leaf=p[1], lineno=p.lineno(1))
 
     def p_stmt_list(p):
         '''stmt_list : stmt stmt_list
                      | empty'''
-        p[0] = Node("stmt_list", [p[1], p[2]]) if len(p) == 3 else Node("stmt_list")
+        p[0] = Node("stmt_list", [p[1], p[2]], lineno=p.lineno(1)) if len(p) == 3 else Node("stmt_list", lineno=p.lineno(1))
 
     def p_stmt(p):
         '''stmt : assign_stmt
@@ -365,41 +581,45 @@ def run_lalr_parser(data, show_trace=True):
                | block
                | decl
                | print_stmt'''
-        p[0] = Node("stmt", [p[1]])
+        p[0] = Node("stmt", [p[1]], lineno=p.lineno(1))
 
     def p_assign_stmt(p):
         '''assign_stmt : ID ASSIGN expr SEMI'''
-        p[0] = Node("assign_stmt", [p[3]], p[1])
+        p[0] = Node("assign_stmt", [p[3]], p[1], lineno=p.lineno(1))
 
     def p_expr(p):
         '''expr : expr PLUS  term
                | expr MINUS term
                | term'''
-        p[0] = p[1] if len(p) == 2 else Node("expr", [p[1], p[3]], p[2])
+        p[0] = p[1] if len(p) == 2 else Node("expr", [p[1], p[3]], p[2], lineno=p.lineno(1))
 
     def p_term(p):
         '''term : term MUL factor
                | term DIV factor
                | term MOD factor
                | factor'''
-        p[0] = p[1] if len(p) == 2 else Node("term", [p[1], p[3]], p[2])
+        p[0] = p[1] if len(p) == 2 else Node("term", [p[1], p[3]], p[2], lineno=p.lineno(1))
 
     def p_factor(p):
         '''factor : LPAREN expr RPAREN
                | ID
                | INT
                | FLOAT'''
-        p[0] = Node("factor", [p[2]]) if len(p) == 4 else Node("factor", leaf=p[1])
+        #p[0] = Node("factor", [p[2]]) if len(p) == 4 else Node("factor", leaf=p[1])
+        if len(p) == 4:
+            p[0] = Node("factor", [p[2]], lineno=p.lineno(1))
+        else:
+            p[0] = Node("factor", leaf=p[1], lineno=p.lineno(1))
 
     def p_bool_expr(p):
         '''bool_expr : bool_expr OR bool_term
                     | bool_term'''
-        p[0] = p[1] if len(p) == 2 else Node("bool_expr", [p[1], p[3]], p[2])
+        p[0] = p[1] if len(p) == 2 else Node("bool_expr", [p[1], p[3]], p[2], lineno=p.lineno(1))
 
     def p_bool_term(p):
         '''bool_term : bool_term AND bool_factor
                     | bool_factor'''
-        p[0] = p[1] if len(p) == 2 else Node("bool_term", [p[1], p[3]], p[2])
+        p[0] = p[1] if len(p) == 2 else Node("bool_term", [p[1], p[3]], p[2], lineno=p.lineno(1))
 
     def p_bool_factor(p):
         '''bool_factor : NOT bool_factor
@@ -408,9 +628,9 @@ def run_lalr_parser(data, show_trace=True):
         if len(p) == 2:
             p[0] = p[1]
         elif len(p) == 3:
-            p[0] = Node("NOT", [p[2]])
+            p[0] = Node("NOT", [p[2]], lineno=p.lineno(1))
         else:
-            p[0] = Node("bool_factor", [p[2]])
+            p[0] = Node("bool_factor", [p[2]], lineno=p.lineno(1))
 
     def p_rel_expr(p):
         '''rel_expr : expr LT  expr
@@ -419,23 +639,23 @@ def run_lalr_parser(data, show_trace=True):
                     | expr GE  expr
                     | expr EQ  expr
                     | expr NEQ expr'''
-        p[0] = Node("rel_expr", [p[1], p[3]], p[2])
+        p[0] = Node("rel_expr", [p[1], p[3]], p[2], lineno=p.lineno(1))
 
     def p_while_stmt(p):
         '''while_stmt : WHILE LPAREN bool_expr RPAREN stmt'''
-        p[0] = Node("while_stmt", [p[3], p[5]])
+        p[0] = Node("while_stmt", [p[3], p[5]], lineno=p.lineno(1))
 
     def p_if_stmt(p):
         '''if_stmt : IF LPAREN bool_expr RPAREN stmt ELSE stmt'''
-        p[0] = Node("if_stmt", [p[3], p[5], p[7]])
+        p[0] = Node("if_stmt", [p[3], p[5], p[7]], lineno=p.lineno(1))
 
     def p_block(p):
         '''block : LCURLY stmt_list RCURLY'''
-        p[0] = Node("block", [p[2]])
+        p[0] = Node("block", [p[2]], lineno=p.lineno(1))
 
     def p_print_stmt(p):
         '''print_stmt : PRINT LPAREN expr RPAREN SEMI'''
-        p[0] = Node("print_stmt", [p[3]])
+        p[0] = Node("print_stmt", [p[3]], lineno=p.lineno(1))
 
     def p_empty(p):
         'empty :'
@@ -499,6 +719,15 @@ def run_lalr_parser(data, show_trace=True):
     if tree:
         print("\nParse Tree:")
         tree.print_tree()
+
+        print("\nRunning Semantic Analysis...")
+        analyzer = SemanticAnalyzer()
+        analyzer.analyze(tree)
+        analyzer.report()
+        print("=" * 60)
+        print("Final Symbol Table:")
+        print("=" * 60)
+        analyzer.print_symbol_table()
     return tree
 
 
